@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors'); // <-- A NOVA LINHA MÁGICA
+const cors = require('cors');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const activeDownloads = new Set();
 
-app.use(cors()); // <-- DIZEMOS AO SERVIDOR PARA ACEITAR LIGAÇÕES DE FORA
+app.use(cors());
 app.use(express.json());
 
 app.post('/api/download', (req, res) => {
@@ -31,7 +31,8 @@ app.post('/api/download', (req, res) => {
     const tempFileName = `video_${Date.now()}`;
     const outputPath = path.join(downloadsDir, `${tempFileName}.mp4`);
 
-    const command = `yt-dlp -o "${outputPath}" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" "${videoUrl}"`;
+    // A MUDANÇA MÁGICA ESTÁ AQUI. PEDIMOS UM ARQUIVO MP4 JÁ PRONTO.
+    const command = `yt-dlp -o "${outputPath}" -f "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[ext=mp4]" "${videoUrl}"`;
 
     exec(command, (error, stdout, stderr) => {
         activeDownloads.delete(videoUrl);
@@ -41,10 +42,11 @@ app.post('/api/download', (req, res) => {
             return res.status(500).json({ error: 'Falha ao extrair vídeo. Pode ser privado ou ter restrição geográfica.' });
         }
         
-        const titleMatch = stderr.match(/$$download$$ Destination: (.*?)\.mp4/);
         let finalFileName = "video_baixado";
+        // Esta regex é mais simples e funciona melhor para extrair o nome do arquivo.
+        const titleMatch = stderr.match(/Destination: (.*?)\.mp4/);
         if(titleMatch && titleMatch[1]) {
-           finalFileName = titleMatch[1].replace(path.join(downloadsDir, ''), '').replace(/\\/g, '');
+           finalFileName = titleMatch[1];
         }
 
         console.log(`[${new Date().toLocaleTimeString()}] Download concluído. Enviando para o cliente.`);

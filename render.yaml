@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: downloader-backend # O nome do seu serviço
+    runtime: node
+    plan: free
+    buildCommand: "npm install"
+    startCommand: "node server.js"
+    healthCheckPath: / # Adiciona um verificador de saúde
+    envVars:
+      - key: NODE_VERSION
+        value: 18 # Especifica uma versão estável do Node
+    builds:
+      - # Esta parte diz ao Render para instalar ferramentas extras
+        nativeEnvironment:
+          packages:
+            - name: ffmpeg

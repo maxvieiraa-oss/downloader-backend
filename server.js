@@ -1,70 +1,66 @@
 const express = require('express');
-const cors = require('cors');
-const youtubedl = require('youtube-dl-exec');
+const cors = require('cors'); // <-- A NOVA LINHA MÁGICA
+const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
-app.use(cors({
-    // ESSENCIAL: Expõe nosso header customizado para o navegador
-    exposedHeaders: ['X-Video-Title'],
-}));
-app.use(express.json());
-
-const downloadsFolder = path.join(__dirname, 'downloads');
-if (!fs.existsSync(downloadsFolder)) fs.mkdirSync(downloadsFolder);
-
+const PORT = process.env.PORT || 3000;
 const activeDownloads = new Set();
 
-app.post('/api/download', async (req, res) => {
-    const { url } = req.body;
-    if (!url) return res.status(400).json({ error: "URL não fornecida" });
+app.use(cors()); // <-- DIZEMOS AO SERVIDOR PARA ACEITAR LIGAÇÕES DE FORA
+app.use(express.json());
 
-    if (activeDownloads.has(url)) {
-        return res.status(429).json({ error: "Um download para esta URL já está em andamento." });
+app.post('/api/download', (req, res) => {
+    const videoUrl = req.body.url;
+
+    if (!videoUrl) {
+        return res.status(400).json({ error: 'URL do vídeo é obrigatória.' });
+    }
+    if (activeDownloads.has(videoUrl)) {
+        return res.status(429).json({ error: 'Este download já está em andamento.' });
     }
 
-    try {
-        activeDownloads.add(url);
+    console.log(`[${new Date().toLocaleTimeString()}] Pedido recebido para: ${videoUrl}`);
+    activeDownloads.add(videoUrl);
 
-        // --- MELHORIA 1: Extrair o Título do Vídeo ---
-        console.log(`[🔎] Extraindo metadados do vídeo...`);
-        const videoInfo = await youtubedl(url, { dumpSingleJson: true });
-        // Limpa o título para ser um nome de arquivo válido no Windows/Mac/Linux
-        const sanitizedTitle = videoInfo.title.replace(/[\/:*?"<>|]/g, '_').substring(0, 100);
-        console.log(`[🏷️] Título encontrado: ${sanitizedTitle}`);
-        
-        const filePath = path.join(downloadsFolder, `video_${Date.now()}.mp4`);
-
-        console.log(`[🚀] Iniciando extração PRO para: ${url}`);
-        await youtubedl(url, {
-            output: filePath,
-            format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            mergeOutputFormat: 'mp4'
-        });
-
-        console.log(`[✅] Vídeo processado! Enviando para a extensão...`);
-
-        // --- MELHORIA 2: Enviar o Título no Header da Resposta ---
-        res.setHeader('X-Video-Title', sanitizedTitle);
-        
-        res.download(filePath, (err) => {
-            if (err) console.error("Erro ao enviar:", err);
-            fs.unlinkSync(filePath); 
-        });
-
-    } catch (error) {
-        console.error("[❌] Falha na extração do yt-dlp.", error);
-        let userMessage = "Falha ao extrair vídeo. Pode ser privado ou ter restrição geográfica.";
-        res.status(500).json({ error: userMessage });
-    
-    } finally {
-        activeDownloads.delete(url);
+    const downloadsDir = path.join(__dirname, 'downloads');
+    if (!fs.existsSync(downloadsDir)) {
+        fs.mkdirSync(downloadsDir);
     }
+    const tempFileName = `video_${Date.now()}`;
+    const outputPath = path.join(downloadsDir, `${tempFileName}.mp4`);
+
+    const command = `yt-dlp -o "${outputPath}" -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" "${videoUrl}"`;
+
+    exec(command, (error, stdout, stderr) => {
+        activeDownloads.delete(videoUrl);
+
+        if (error || !fs.existsSync(outputPath)) {
+            console.error(`Falha no yt-dlp: ${stderr}`);
+            return res.status(500).json({ error: 'Falha ao extrair vídeo. Pode ser privado ou ter restrição geográfica.' });
+        }
+        
+        const titleMatch = stderr.match(/$$download$$ Destination: (.*?)\.mp4/);
+        let finalFileName = "video_baixado";
+        if(titleMatch && titleMatch[1]) {
+           finalFileName = titleMatch[1].replace(path.join(downloadsDir, ''), '').replace(/\\/g, '');
+        }
+
+        console.log(`[${new Date().toLocaleTimeString()}] Download concluído. Enviando para o cliente.`);
+        res.setHeader('X-Video-Title', encodeURIComponent(finalFileName));
+        res.download(outputPath, (err) => {
+            if (err) {
+                console.error("Erro ao enviar o arquivo:", err);
+            }
+            fs.unlink(outputPath, (unlinkErr) => {
+                if (unlinkErr) console.error("Erro ao deletar arquivo temporário:", unlinkErr);
+            });
+        });
+    });
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🔥 Servidor INTELIGENTE rodando na porta ${PORT}`);
-    console.log(`Esperando ordens da extensão...`);
+    console.log('Esperando ordens da extensão...');
 });
